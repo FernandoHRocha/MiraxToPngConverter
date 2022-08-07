@@ -1,0 +1,9 @@
+# Mirax Converter
+
+## Objetivo
+
+Extrair imagens de laminas de tecidos biológicos para formato de imagem .png.
+
+## Dependencias
+
+OpenSlide Python•
