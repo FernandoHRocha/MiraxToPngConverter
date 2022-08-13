@@ -8,36 +8,16 @@ from openslide.deepzoom import DeepZoomGenerator
 import os
 import tkinter as tk
 from tkinter import filedialog
-import mysql.connector
 import base64
 from io import BytesIO
 import requests
 
-SQL_INSERT = " "
-class database():
-
-    def connectDatabase(self):
-        return mysql.connector.connect(
-            host="localhost",
-            port="3306",
-            user="root",
-            password="123",
-            database="histologia",
-            charset='utf8',
-            use_unicode=True,
-            get_warnings=True
-            )
-
-    def storeImage(self, level, row, col, content):
-        database_histologia = self.connectDatabase()
-        cursor = database_histologia.cursor()
-        query = "INSERT INTO histologia.slide (lamina_idlamina, level, row, col, content) VALUES ('1', " + str(level) + ", " + str(row) + ", " + str(col) + ", " + str(content) + ')'
-        cursor.execute( query )
-        database_histologia.commit()
+API_URL = 'http://127.0.0.1:8084/'
 
 class converter():
 
     def openFile(self, level):
+        """Extrai as informações necessárias a respeito do arquivo mirax desejado."""
         self.level = level
         root = tk.Tk()
         root.withdraw()
@@ -47,19 +27,18 @@ class converter():
         self.file_folder = os.path.dirname(path)
         self.file_path = path
         self.file_name = os.path.split(self.file_path)[1]
+        self.slide_name = self.file_name.replace('.mrxs', '')
 
         self.openSlide()
-        return
 
     def openSlide(self):
-
+        """Converte o arquivo da lamina para futura manipulação."""
         slide = open_slide(self.file_path)
-        name = self.file_name.replace('.mrxs', '')
         thumbnail = slide.get_thumbnail(size=(400,400))
         buffer = BytesIO()
         thumbnail.save(buffer, format='PNG')
         img = str(base64.b64encode(buffer.getvalue()))[1:]
-        self.storeSheet(img, name)
+        self.storeSheet(img)
         
         #tiles = DeepZoomGenerator(slide, tile_size=512, overlap=0, limit_bounds=False)
         #print(tiles.level_count)
@@ -67,16 +46,32 @@ class converter():
         #self.convertToImages(self.level, tiles)
         #self.convertToImages(15, tiles)
 
-    def storeSheet(self, slide, name):
-        url = 'http://127.0.0.1:8084/sheet'
-        obj = {
-            'name' : name,
-            'description' : name,
+    def storeSheet(self, slide: str):
+        """Insere uma nova lâmina no banco de dados, caso ela já exista nada é feito."""
+        url = API_URL + 'sheet'
+        slide_obj = {
+            'name' : self.slide_name,
+            'description' : self.slide_name,
             'thumbnail' : slide
         }
         result = requests.post(url=url, json=obj)
-        print(result.content)
+        status = result.status_code
+        print(result.elapsed)
+        if(status == 201 or status == 200):
+            self.sheet_idsheet = result.json()[1]
+            # CONVERTER A IMAGEM PARA O MAPEAMENTO EM ZOOM
         exit()
+    
+    def storeSlides(self, slide: openSlide):
+        """Insere uma nova lâmina no banco de dados, com o mapeamento das imagens."""
+        url = API_URL + 'slide/'
+        slide_piece_obj = {
+            'sheet_idsheet' : self.sheet_idsheet,
+            'level' : 1,
+            'row' : '',
+            'column' : 1,
+            'content' : ''
+        }
 
     def convertToImages(self, resolution_level, tiles):
 
