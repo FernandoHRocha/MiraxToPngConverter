@@ -13,12 +13,13 @@ from io import BytesIO
 import requests
 
 API_URL = 'http://127.0.0.1:8084/'
+TILE_SIZE = 512
+ZOOM_LEVELS = [12, 13, 14]
 
-class converter():
+class Converter():
 
-    def openFile(self, level):
+    def open_file(self):
         """Extrai as informações necessárias a respeito do arquivo mirax desejado."""
-        self.level = level
         root = tk.Tk()
         root.withdraw()
 
@@ -29,24 +30,17 @@ class converter():
         self.file_name = os.path.split(self.file_path)[1]
         self.slide_name = self.file_name.replace('.mrxs', '')
 
-        self.openSlide()
+        self.open_slide()
 
-    def openSlide(self):
+    def open_slide(self):
         """Converte o arquivo da lamina para futura manipulação."""
-        slide = open_slide(self.file_path)
-        thumbnail = slide.get_thumbnail(size=(400,400))
-        buffer = BytesIO()
-        thumbnail.save(buffer, format='PNG')
-        img = str(base64.b64encode(buffer.getvalue()))[1:]
-        self.storeSheet(img)
-        
-        #tiles = DeepZoomGenerator(slide, tile_size=512, overlap=0, limit_bounds=False)
-        #print(tiles.level_count)
-        #for level in range(12,13):
-        #self.convertToImages(self.level, tiles)
-        #self.convertToImages(15, tiles)
+        self.slide = open_slide(self.file_path)
+        thumbnail = self.slide.get_thumbnail(size=(400,400))
+        thumbnail_string = self.convert_image_to_base64(thumbnail)
 
-    def storeSheet(self, slide: str):
+        self.store_sheet(thumbnail_string)
+
+    def store_sheet(self, slide: str):
         """Insere uma nova lâmina no banco de dados, caso ela já exista nada é feito."""
         url = API_URL + 'sheet'
         slide_obj = {
@@ -54,64 +48,59 @@ class converter():
             'description' : self.slide_name,
             'thumbnail' : slide
         }
-        result = requests.post(url=url, json=obj)
+        result = requests.post(url=url, json=slide_obj)
         status = result.status_code
-        print(result.elapsed)
-        if(status == 201 or status == 200):
+        if(status == 201):
             self.sheet_idsheet = result.json()[1]
+            self.map_slide_images()
             # CONVERTER A IMAGEM PARA O MAPEAMENTO EM ZOOM
+        if(status == 200):
+            print('A imagem já se encontra no sistema.')
         exit()
     
-    def storeSlides(self, slide: openSlide):
+    def map_slide_images(self):
+        """Converte a imagem da lâmina para uma sequência mapeada de imagens."""
+        self.slide_tiles = DeepZoomGenerator(self.slide, tile_size=TILE_SIZE, overlap=0, limit_bounds=False)
+        for zoom_level in ZOOM_LEVELS:
+            self.get_zoom_tiles(zoom_level)
+
+    def get_zoom_tiles(self, zoom_level: int):
+        """Obtem as imagens de uma lâmina para determinado nível de ampliação"""
+        rows, cols = self.slide_tiles.level_tiles[zoom_level]
+
+        for col in range(cols):
+            for row in range(rows):
+                temp_tile = self.slide_tiles.get_tile(zoom_level, (row, col))
+                temp_tile = temp_tile.convert('RGB')
+                content = self.convert_image_to_base64(temp_tile)
+                self.store_slide(zoom_level=zoom_level, row=row+1, col=col+1, content=content)
+
+    def store_slide(self, zoom_level: int, row: int, col: int, content: str):
         """Insere uma nova lâmina no banco de dados, com o mapeamento das imagens."""
         url = API_URL + 'slide/'
         slide_piece_obj = {
             'sheet_idsheet' : self.sheet_idsheet,
-            'level' : 1,
-            'row' : '',
-            'column' : 1,
-            'content' : ''
+            'level' : zoom_level,
+            'row' : row,
+            'col' : col,
+            'content' : content
         }
+        result = requests.post(url=url, json=slide_piece_obj)
+        status = result.status_code
+        if(status == 201):
+            print('Piece row = ' + str(row) + ' col = ' + str(col))
+        else:
+            print(result.content)
+            if(status == 500):
+                exit()
+    
+    def convert_image_to_base64(self, image: Image) -> str:
+        """Converte um arquivo de imagem em um base64"""
+        buffer = BytesIO()
+        image.save(buffer, format='PNG')
+        image_string = str(base64.b64encode(buffer.getvalue()))[1:]
+        return image_string
 
-    def convertToImages(self, resolution_level, tiles):
-
-        rows, cols = tiles.level_tiles[resolution_level];
-        destination_path = self.file_name.replace('.mrxs', '')+'_converted_'+str(resolution_level)
-
-        for col in range(cols):
-            for row in range(rows):
-                tile_name = os.path.join(destination_path, 'l%d_c%d' % ((col+1), (row+1)))
-                print("Salvando arquivo nomeado como: ", tile_name)
-                temp_tile = tiles.get_tile(resolution_level, (row, col))
-                temp_tile_RGB = temp_tile.convert('RGB')
-                self.storeLocalImage(destination_path, tile_name, temp_tile_RGB)
-
-    def storeLocalImage(self, destination_path, tile_name, temp_tile_RGB):
-        temp_tile_np = np.array(temp_tile_RGB)
-        try:
-            plt.imsave(tile_name + ".png", temp_tile_np)
-        except:
-            os.mkdir(destination_path, 0o666)
-            plt.imsave(tile_name + ".png", temp_tile_np)
-
-class databaseStore():
-    def readFiles(self, level):
-        dir_path = './Adrenal 5_converted_'+str(level)
-        for(paths, names, files) in os.walk(dir_path):
-            for file in files:
-                img = str(base64.b64encode(open(dir_path + '/' + file, "rb").read()))[1:]
-                coordinates = file.replace('.png','').split('_')
-                row = coordinates[0].replace('l','')
-                col = coordinates[1].replace('c','')
-                connection = database()
-                connection.storeImage(level=2, row=row, col=col, content=img)
-
-
-level = 12
-bot = converter()
-bot.openFile(level)
-exit()
-
-main = databaseStore()
-main.readFiles(level)
+bot = Converter()
+bot.open_file()
 exit()
